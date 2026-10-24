@@ -1,0 +1,6 @@
+{
+  "name": "Teleprompter Pro Studio",
+  "description": "Aplicativo de teleprompter profissional de alta performance com rolagem suave via requestAnimationFrame, espelhamento horizontal e vertical para espelhos ópticos, controle por voz em tempo real e tema preto OLED.",
+  "requestFramePermissions": ["microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
