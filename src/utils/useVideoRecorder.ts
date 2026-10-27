@@ -11,9 +11,10 @@ export interface VideoRecorderState {
   showCameraPreview: boolean;
   cameraPosition: 'top-center' | 'top-right' | 'top-left' | 'hidden';
   mirrorCamera: boolean;
+  isProcessing: boolean;
 }
 
-export function useVideoRecorder() {
+export function useVideoRecorder(onRecordingComplete?: (blob: Blob, url: string) => void) {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [recordingDuration, setRecordingDuration] = useState<number>(0);
@@ -24,11 +25,14 @@ export function useVideoRecorder() {
   const [showCameraPreview, setShowCameraPreview] = useState<boolean>(true);
   const [cameraPosition, setCameraPosition] = useState<'top-center' | 'top-right' | 'top-left' | 'hidden'>('top-center');
   const [mirrorCamera, setMirrorCamera] = useState<boolean>(true);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const durationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const onCompleteCbRef = useRef(onRecordingComplete);
+  onCompleteCbRef.current = onRecordingComplete;
 
   // Stop camera tracks helper
   const stopCameraTracks = useCallback(() => {
@@ -78,7 +82,7 @@ export function useVideoRecorder() {
     }
   }, []);
 
-  // Determine supported mimeType
+  // Determine supported mimeType with fallback
   const getSupportedMimeType = (): string => {
     const types = [
       'video/webm;codecs=vp9,opus',
@@ -88,7 +92,7 @@ export function useVideoRecorder() {
       'video/mp4',
     ];
     for (const t of types) {
-      if (MediaRecorder.isTypeSupported(t)) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) {
         return t;
       }
     }
@@ -96,13 +100,15 @@ export function useVideoRecorder() {
   };
 
   // Start recording
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (customStream?: MediaStream) => {
     try {
       setCameraError(null);
-      let stream = streamRef.current;
+      let stream = customStream || streamRef.current;
       if (!stream || !stream.active) {
         stream = await startCamera();
-        if (!stream) return;
+        if (!stream) {
+          throw new Error('Câmera não inicializada');
+        }
       }
 
       chunksRef.current = [];
@@ -119,6 +125,7 @@ export function useVideoRecorder() {
       };
 
       recorder.onstop = () => {
+        setIsProcessing(false);
         const finalMimeType = recorder.mimeType || 'video/webm';
         const blob = new Blob(chunksRef.current, { type: finalMimeType });
         const url = URL.createObjectURL(blob);
@@ -129,6 +136,17 @@ export function useVideoRecorder() {
           clearInterval(durationTimerRef.current);
           durationTimerRef.current = null;
         }
+
+        // Notify callback immediately
+        if (onCompleteCbRef.current) {
+          onCompleteCbRef.current(blob, url);
+        }
+      };
+
+      recorder.onerror = (event: any) => {
+        console.error('MediaRecorder error:', event);
+        setIsRecording(false);
+        setIsProcessing(false);
       };
 
       // Request data slice every 1 second
@@ -145,27 +163,54 @@ export function useVideoRecorder() {
       console.error('Failed to start MediaRecorder:', err);
       setCameraError(`Erro ao iniciar a gravação: ${err.message || 'Falha de gravação'}`);
       setIsRecording(false);
+      setIsProcessing(false);
     }
   }, [startCamera]);
 
-  // Stop recording
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+  // Stop recording with return promise
+  const stopRecording = useCallback((): Promise<{ blob: Blob; url: string } | null> => {
+    return new Promise((resolve) => {
+      if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+        setIsRecording(false);
+        resolve(null);
+        return;
+      }
+
+      setIsProcessing(true);
+
+      const handleStop = () => {
+        const finalMimeType = mediaRecorderRef.current?.mimeType || 'video/webm';
+        const blob = new Blob(chunksRef.current, { type: finalMimeType });
+        const url = URL.createObjectURL(blob);
+        setRecordedBlob(blob);
+        setRecordedUrl(url);
+        setIsRecording(false);
+        setIsProcessing(false);
+
+        if (durationTimerRef.current) {
+          clearInterval(durationTimerRef.current);
+          durationTimerRef.current = null;
+        }
+
+        if (onCompleteCbRef.current) {
+          onCompleteCbRef.current(blob, url);
+        }
+
+        resolve({ blob, url });
+      };
+
+      // Set one-time listener
+      mediaRecorderRef.current.addEventListener('stop', handleStop, { once: true });
       mediaRecorderRef.current.stop();
-    }
-    if (durationTimerRef.current) {
-      clearInterval(durationTimerRef.current);
-      durationTimerRef.current = null;
-    }
-    setIsRecording(false);
+    });
   }, []);
 
   // Toggle recording
   const toggleRecording = useCallback(() => {
     if (isRecording) {
-      stopRecording();
+      return stopRecording();
     } else {
-      startRecording();
+      return startRecording();
     }
   }, [isRecording, startRecording, stopRecording]);
 
@@ -199,6 +244,7 @@ export function useVideoRecorder() {
     showCameraPreview,
     cameraPosition,
     mirrorCamera,
+    isProcessing,
     startCamera,
     stopCamera: stopCameraTracks,
     startRecording,

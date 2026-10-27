@@ -8,13 +8,12 @@ import {
   FastForward,
   Rewind,
   Focus,
-  Mic,
-  MicOff,
-  FlipHorizontal,
   Smartphone,
-  CheckCircle2,
   ArrowLeft,
-  Volume2,
+  Circle,
+  Square,
+  Video,
+  Zap,
 } from 'lucide-react';
 import { RemoteStatusState } from '../types';
 import { RemoteChannel } from '../utils/remoteChannel';
@@ -24,9 +23,11 @@ interface SmartphoneRemoteViewProps {
 }
 
 export const SmartphoneRemoteView: React.FC<SmartphoneRemoteViewProps> = ({ onExitRemote }) => {
-  const [remoteChannel] = useState(() => new RemoteChannel());
+  const [remoteChannel] = useState(() => new RemoteChannel(false));
   const [status, setStatus] = useState<RemoteStatusState>({
     isPlaying: false,
+    isRecording: false,
+    recordingDuration: 0,
     speed: 4,
     fontSize: 52,
     title: 'Teleprompter Ao Vivo',
@@ -40,6 +41,7 @@ export const SmartphoneRemoteView: React.FC<SmartphoneRemoteViewProps> = ({ onEx
   });
 
   const [connected, setConnected] = useState<boolean>(true);
+  const [isWsLive, setIsWsLive] = useState<boolean>(false);
   const [lastAction, setLastAction] = useState<string>('');
 
   const triggerHaptic = () => {
@@ -56,12 +58,17 @@ export const SmartphoneRemoteView: React.FC<SmartphoneRemoteViewProps> = ({ onEx
       setConnected(true);
     });
 
-    // Request initial state sync
+    remoteChannel.setOnConnectionChange((isConnected, transport) => {
+      setIsWsLive(isConnected && transport === 'websocket');
+      setConnected(isConnected);
+    });
+
+    // Request initial state sync via WebSocket / Bus
     remoteChannel.sendCommand('sync_state_req');
 
     const interval = setInterval(() => {
       remoteChannel.sendCommand('sync_state_req');
-    }, 4000);
+    }, 3000);
 
     return () => {
       clearInterval(interval);
@@ -82,6 +89,10 @@ export const SmartphoneRemoteView: React.FC<SmartphoneRemoteViewProps> = ({ onEx
   const secs = status.elapsedSeconds % 60;
   const timeFormatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 
+  const recMins = Math.floor(status.recordingDuration / 60);
+  const recSecs = status.recordingDuration % 60;
+  const recTimeFormatted = `${String(recMins).padStart(2, '0')}:${String(recSecs).padStart(2, '0')}`;
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col justify-between p-4 sm:p-6 select-none max-w-md mx-auto">
       {/* Header bar */}
@@ -96,16 +107,36 @@ export const SmartphoneRemoteView: React.FC<SmartphoneRemoteViewProps> = ({ onEx
             </button>
           )}
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <h1 className="text-sm font-semibold tracking-wider uppercase text-zinc-300">
               Controle Remoto
             </h1>
+            <div className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800">
+              {isWsLive ? (
+                <>
+                  <Zap className="w-3 h-3 text-emerald-400 fill-current animate-pulse" />
+                  <span className="text-emerald-400 font-bold">WS &lt;5ms</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span className="text-zinc-400">Sync Ativo</span>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="text-right">
-          <div className="text-xs font-mono font-bold text-amber-400">{timeFormatted}</div>
-          <div className="text-[10px] text-zinc-500 truncate max-w-[120px]">{status.title}</div>
+        <div className="text-right flex items-center gap-2">
+          {status.isRecording && (
+            <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-950 border border-red-500/80 text-red-400 font-mono font-bold text-xs animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.4)]">
+              <span className="w-2 h-2 rounded-full bg-red-500" />
+              <span>REC {recTimeFormatted}</span>
+            </div>
+          )}
+          <div>
+            <div className="text-xs font-mono font-bold text-amber-400">{timeFormatted}</div>
+            <div className="text-[10px] text-zinc-500 truncate max-w-[120px]">{status.title}</div>
+          </div>
         </div>
       </header>
 
@@ -128,11 +159,38 @@ export const SmartphoneRemoteView: React.FC<SmartphoneRemoteViewProps> = ({ onEx
         </div>
       </div>
 
+      {/* 2. DEDICATED RECORDING BUTTON (REC) ON REMOTE - EXPLICIT START/STOP DISPATCH */}
+      <div className="my-2">
+        {status.isRecording ? (
+          <button
+            onClick={() => send('stop_record', null, '⏹ Parando Gravação...')}
+            className="w-full py-4 px-4 rounded-xl bg-red-950 border-2 border-red-500 text-red-200 font-extrabold flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(239,68,68,0.5)] transition-all animate-pulse active:scale-95 cursor-pointer"
+          >
+            <Square className="w-5 h-5 fill-current text-red-400 shrink-0" />
+            <div className="flex flex-col items-center">
+              <span className="text-sm uppercase tracking-wider font-black">Parar Gravação no Host</span>
+              <span className="text-[11px] font-mono text-red-300">REC {recTimeFormatted} • Salvar Vídeo</span>
+            </div>
+          </button>
+        ) : (
+          <button
+            onClick={() => send('start_record', null, '🔴 Disparando Gravação...')}
+            className="w-full py-4 px-4 rounded-xl bg-red-600 hover:bg-red-500 active:bg-red-700 active:scale-95 text-white font-extrabold flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all cursor-pointer"
+          >
+            <Circle className="w-5 h-5 fill-current text-white animate-pulse shrink-0" />
+            <div className="flex flex-col items-center">
+              <span className="text-sm uppercase tracking-wider font-black">Disparar Gravação (REC)</span>
+              <span className="text-[10px] opacity-90 font-medium">Inicia gravação de vídeo na câmera do teleprompter</span>
+            </div>
+          </button>
+        )}
+      </div>
+
       {/* Primary BIG PLAY / PAUSE BUTTON */}
-      <div className="my-auto py-4 flex flex-col items-center justify-center">
+      <div className="my-auto py-2 flex flex-col items-center justify-center">
         <button
           onClick={() => send('toggle_play', null, status.isPlaying ? 'Pausado' : 'Reproduzindo')}
-          className={`w-36 h-36 sm:w-44 sm:h-44 rounded-full flex flex-col items-center justify-center gap-2 shadow-2xl transition-all transform active:scale-95 border-4 ${
+          className={`w-32 h-32 sm:w-40 sm:h-40 rounded-full flex flex-col items-center justify-center gap-1.5 shadow-2xl transition-all transform active:scale-95 border-4 ${
             status.isPlaying
               ? 'bg-amber-500 border-amber-300 text-black shadow-amber-500/30'
               : 'bg-emerald-600 border-emerald-400 text-white shadow-emerald-500/30'
@@ -140,85 +198,85 @@ export const SmartphoneRemoteView: React.FC<SmartphoneRemoteViewProps> = ({ onEx
         >
           {status.isPlaying ? (
             <>
-              <Pause className="w-14 h-14 fill-current" />
-              <span className="text-xs font-black uppercase tracking-wider">Pausar</span>
+              <Pause className="w-12 h-12 fill-current" />
+              <span className="text-[11px] font-black uppercase tracking-wider">Pausar</span>
             </>
           ) : (
             <>
-              <Play className="w-14 h-14 fill-current ml-2" />
-              <span className="text-xs font-black uppercase tracking-wider">Iniciar</span>
+              <Play className="w-12 h-12 fill-current ml-1" />
+              <span className="text-[11px] font-black uppercase tracking-wider">Iniciar</span>
             </>
           )}
         </button>
       </div>
 
       {/* Controls Grid */}
-      <div className="space-y-3">
+      <div className="space-y-2.5">
         {/* Speed & Font adjustments */}
         <div className="grid grid-cols-2 gap-2 sm:gap-3">
           {/* Speed box */}
-          <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3 flex flex-col items-center">
-            <span className="text-[11px] font-semibold uppercase text-zinc-400 mb-1">
-              Velocidade: <strong className="text-amber-400">{status.speed}</strong>
+          <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-2.5 flex flex-col items-center">
+            <span className="text-[10px] font-semibold uppercase text-zinc-400 mb-1">
+              Velocidade: <strong className="text-amber-400">{status.speed}x</strong>
             </span>
             <div className="flex items-center gap-2 w-full justify-between">
               <button
                 onClick={() => send('speed_down', null, 'Velocidade -')}
-                className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-lg text-white font-bold flex items-center justify-center"
+                className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-lg text-white font-bold flex items-center justify-center"
               >
-                <Minus className="w-5 h-5" />
+                <Minus className="w-4 h-4" />
               </button>
               <button
                 onClick={() => send('speed_up', null, 'Velocidade +')}
-                className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-lg text-white font-bold flex items-center justify-center"
+                className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-lg text-white font-bold flex items-center justify-center"
               >
-                <Plus className="w-5 h-5" />
+                <Plus className="w-4 h-4" />
               </button>
             </div>
           </div>
 
           {/* Font box */}
-          <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3 flex flex-col items-center">
-            <span className="text-[11px] font-semibold uppercase text-zinc-400 mb-1">
+          <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-2.5 flex flex-col items-center">
+            <span className="text-[10px] font-semibold uppercase text-zinc-400 mb-1">
               Fonte: <strong className="text-cyan-400">{status.fontSize}px</strong>
             </span>
             <div className="flex items-center gap-2 w-full justify-between">
               <button
                 onClick={() => send('font_down', null, 'Fonte -')}
-                className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-lg text-white font-bold flex items-center justify-center"
+                className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-lg text-white font-bold flex items-center justify-center"
               >
-                <Minus className="w-5 h-5" />
+                <Minus className="w-4 h-4" />
               </button>
               <button
                 onClick={() => send('font_up', null, 'Fonte +')}
-                className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-lg text-white font-bold flex items-center justify-center"
+                className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-lg text-white font-bold flex items-center justify-center"
               >
-                <Plus className="w-5 h-5" />
+                <Plus className="w-4 h-4" />
               </button>
             </div>
           </div>
         </div>
 
         {/* Camera Alignment Presets */}
-        <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-2.5">
-          <div className="text-[11px] font-semibold uppercase text-zinc-400 mb-1.5 text-center flex items-center justify-center gap-1.5">
-            <Focus className="w-3.5 h-3.5 text-amber-400" />
+        <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-2">
+          <div className="text-[10px] font-semibold uppercase text-zinc-400 mb-1 text-center flex items-center justify-center gap-1.5">
+            <Focus className="w-3 h-3 text-amber-400" />
             <span>Foco da Câmera (Olhar)</span>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-3 gap-1">
             <button
               onClick={() => send('align_camera', 'left', 'Olhar p/ Esquerda')}
-              className={`py-2 text-xs font-semibold rounded-lg border transition-all ${
+              className={`py-1.5 text-xs font-semibold rounded-lg border transition-all ${
                 status.cameraAlignment === 'left'
                   ? 'bg-amber-400 text-black border-amber-300 font-bold'
                   : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
               }`}
             >
-              ◧ Esquerda
+              ◧ Esq
             </button>
             <button
               onClick={() => send('align_camera', 'center', 'Olhar no Centro')}
-              className={`py-2 text-xs font-semibold rounded-lg border transition-all ${
+              className={`py-1.5 text-xs font-semibold rounded-lg border transition-all ${
                 status.cameraAlignment === 'center'
                   ? 'bg-amber-400 text-black border-amber-300 font-bold'
                   : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
@@ -228,61 +286,61 @@ export const SmartphoneRemoteView: React.FC<SmartphoneRemoteViewProps> = ({ onEx
             </button>
             <button
               onClick={() => send('align_camera', 'right', 'Olhar p/ Direita')}
-              className={`py-2 text-xs font-semibold rounded-lg border transition-all ${
+              className={`py-1.5 text-xs font-semibold rounded-lg border transition-all ${
                 status.cameraAlignment === 'right'
                   ? 'bg-amber-400 text-black border-amber-300 font-bold'
                   : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
               }`}
             >
-              ◨ Direita
+              ◨ Dir
             </button>
           </div>
         </div>
 
         {/* Quick Nav Row */}
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-4 gap-1.5">
           <button
             onClick={() => send('restart', null, 'Reiniciado')}
-            className="py-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 hover:text-white flex flex-col items-center justify-center gap-1"
+            className="py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 hover:text-white flex flex-col items-center justify-center gap-0.5"
             title="Voltar ao início"
           >
-            <RotateCcw className="w-4 h-4 text-amber-400" />
-            <span className="text-[10px] font-medium">Início</span>
+            <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-[9px] font-medium">Início</span>
           </button>
           <button
             onClick={() => send('prev_section', null, 'Seção Anterior')}
-            className="py-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 hover:text-white flex flex-col items-center justify-center gap-1"
+            className="py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 hover:text-white flex flex-col items-center justify-center gap-0.5"
             title="Seção anterior"
           >
-            <Rewind className="w-4 h-4 text-cyan-400" />
-            <span className="text-[10px] font-medium">-Seção</span>
+            <Rewind className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-[9px] font-medium">-Seção</span>
           </button>
           <button
             onClick={() => send('next_section', null, 'Próxima Seção')}
-            className="py-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 hover:text-white flex flex-col items-center justify-center gap-1"
+            className="py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 hover:text-white flex flex-col items-center justify-center gap-0.5"
             title="Próxima seção"
           >
-            <FastForward className="w-4 h-4 text-cyan-400" />
-            <span className="text-[10px] font-medium">+Seção</span>
+            <FastForward className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-[9px] font-medium">+Seção</span>
           </button>
           <button
-            onClick={() => send('toggle_flip', null, 'Espelhar')}
-            className={`py-3 border rounded-xl flex flex-col items-center justify-center gap-1 transition-colors ${
-              status.flipHorizontal
-                ? 'bg-amber-400/20 border-amber-500/50 text-amber-300'
+            onClick={() => send('toggle_record', null, status.isRecording ? 'Parar Gravação' : 'Gravar')}
+            className={`py-2.5 border rounded-xl flex flex-col items-center justify-center gap-0.5 transition-colors ${
+              status.isRecording
+                ? 'bg-red-950 border-red-500 text-red-300 animate-pulse'
                 : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-800'
             }`}
-            title="Espelhamento de vidro"
+            title="Gravação de Vídeo"
           >
-            <FlipHorizontal className="w-4 h-4" />
-            <span className="text-[10px] font-medium">Espelho</span>
+            <Video className="w-3.5 h-3.5 text-red-400" />
+            <span className="text-[9px] font-medium">{status.isRecording ? 'Parar' : 'Gravar'}</span>
           </button>
         </div>
       </div>
 
       {/* Footer */}
       <footer className="pt-2 text-center text-[10px] text-zinc-600">
-        Controle Remoto P2P sem fio ativo • Toque suave
+        Controle Remoto P2P & Wi-Fi ativo • Toque suave
       </footer>
     </div>
   );

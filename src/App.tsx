@@ -18,6 +18,7 @@ import { RecordedVideoModal } from './components/RecordedVideoModal';
 import { SmartphoneRemoteModal } from './components/SmartphoneRemoteModal';
 import { SmartphoneRemoteView } from './components/SmartphoneRemoteView';
 import { useVideoRecorder } from './utils/useVideoRecorder';
+import { RemoteChannel } from './utils/remoteChannel';
 
 const SCRIPTS_STORAGE_KEY = 'prompter_pro_scripts_v1';
 const CURRENT_ID_STORAGE_KEY = 'prompter_pro_current_id_v1';
@@ -39,7 +40,9 @@ export default function App() {
   const [isRecordedVideoModalOpen, setIsRecordedVideoModalOpen] = useState<boolean>(false);
   const [isRemoteModalOpen, setIsRemoteModalOpen] = useState<boolean>(false);
 
-  const videoRecorder = useVideoRecorder();
+  const videoRecorder = useVideoRecorder((_blob, _url) => {
+    setIsRecordedVideoModalOpen(true);
+  });
 
   // Listen for hashchange (e.g. user goes to #remote or clears hash)
   useEffect(() => {
@@ -53,6 +56,33 @@ export default function App() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, [mode]);
+
+  // Listen for remote commands from phone while in Editor mode
+  useEffect(() => {
+    if (mode !== 'editor') return;
+    const remote = new RemoteChannel(true);
+
+    remote.setOnCommand(async (cmd) => {
+      if (cmd.type === 'start_record' || cmd.type === 'toggle_record') {
+        if (!videoRecorder.isCameraActive) {
+          await videoRecorder.startCamera();
+        }
+        videoRecorder.setShowCameraPreview(true);
+        setMode('prompter');
+        try {
+          await videoRecorder.startRecording();
+        } catch (err) {
+          console.error('Failed to trigger recording from remote in editor mode:', err);
+        }
+      } else if (cmd.type === 'play' || cmd.type === 'toggle_play') {
+        setMode('prompter');
+      }
+    });
+
+    return () => {
+      remote.destroy();
+    };
+  }, [mode, videoRecorder]);
 
   // Initialize saved scripts from localStorage or default samples
   const [savedScripts, setSavedScripts] = useState<ScriptItem[]>(() => {
@@ -232,7 +262,15 @@ export default function App() {
           scriptContent={currentScript.content}
           config={config}
           onUpdateConfig={handleUpdateConfig}
-          onExit={() => setMode('editor')}
+          onExit={async () => {
+            if (videoRecorder.isRecording) {
+              const res = await videoRecorder.stopRecording();
+              if (res) {
+                setIsRecordedVideoModalOpen(true);
+              }
+            }
+            setMode('editor');
+          }}
           onOpenShortcuts={() => setIsShortcutsOpen(true)}
           onOpenRemoteModal={() => setIsRemoteModalOpen(true)}
           videoRecorder={videoRecorder}

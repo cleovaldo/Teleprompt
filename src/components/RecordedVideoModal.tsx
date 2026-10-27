@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Download, RotateCcw, Video, CheckCircle2, Clock, HardDrive } from 'lucide-react';
+import { X, Download, RotateCcw, Video, CheckCircle2, Clock, HardDrive, Loader2 } from 'lucide-react';
 
 interface RecordedVideoModalProps {
   isOpen: boolean;
@@ -20,7 +20,7 @@ export const RecordedVideoModal: React.FC<RecordedVideoModalProps> = ({
   scriptTitle,
   onRecordAgain,
 }) => {
-  if (!isOpen || !videoUrl) return null;
+  if (!isOpen) return null;
 
   const fileSizeMB = videoBlob ? (videoBlob.size / (1024 * 1024)).toFixed(2) : '0';
   const mins = Math.floor(durationSeconds / 60);
@@ -55,28 +55,36 @@ export const RecordedVideoModal: React.FC<RecordedVideoModalProps> = ({
             </div>
             <div>
               <h2 className="text-sm sm:text-base font-bold text-white">Vídeo Gravado com Sucesso</h2>
-              <p className="text-[11px] sm:text-xs text-zinc-400">Assista ao seu take antes de baixar ou regrave</p>
+              <p className="text-[11px] sm:text-xs text-zinc-400">Assista ao seu take, faça o download ou regrave</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
+            title="Fechar (Esc)"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Video Player Container */}
-        <div className="p-3 sm:p-6 bg-black flex justify-center items-center overflow-hidden flex-1">
-          <div className="relative w-full max-w-2xl bg-zinc-900 rounded-xl overflow-hidden border border-zinc-800 aspect-video max-h-[45vh] shadow-2xl flex items-center justify-center">
-            <video
-              src={videoUrl}
-              controls
-              autoPlay
-              playsInline
-              className="w-full h-full object-contain"
-            />
-          </div>
+        <div className="p-3 sm:p-6 bg-black flex justify-center items-center overflow-hidden flex-1 min-h-[220px]">
+          {videoUrl ? (
+            <div className="relative w-full max-w-2xl bg-zinc-900 rounded-xl overflow-hidden border border-zinc-800 aspect-video max-h-[45vh] shadow-2xl flex items-center justify-center">
+              <video
+                src={videoUrl}
+                controls
+                autoPlay
+                playsInline
+                className="w-full h-full object-contain"
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-3 text-zinc-400 py-12">
+              <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+              <span className="text-sm font-medium">Finalizando e gerando arquivo de vídeo...</span>
+            </div>
+          )}
         </div>
 
         {/* Meta details bar */}
@@ -117,7 +125,8 @@ export const RecordedVideoModal: React.FC<RecordedVideoModalProps> = ({
             </button>
             <button
               onClick={handleDownload}
-              className="w-full sm:w-auto flex-1 sm:flex-initial px-5 py-2.5 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-black font-bold rounded-xl sm:rounded-lg text-xs transition-all shadow-[0_0_15px_rgba(251,191,36,0.3)] flex items-center justify-center gap-2 min-h-[44px]"
+              disabled={!videoUrl}
+              className="w-full sm:w-auto flex-1 sm:flex-initial px-5 py-2.5 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-black font-bold rounded-xl sm:rounded-lg text-xs transition-all shadow-[0_0_15px_rgba(251,191,36,0.3)] flex items-center justify-center gap-2 min-h-[44px] disabled:opacity-50"
             >
               <Download className="w-4 h-4" />
               Baixar Vídeo Gravado

@@ -33,11 +33,13 @@ export interface PrompterConfig {
   enableAutoPaceRamp: boolean;   // Auto-adjusts scroll speed to meet target duration
   // 4. Multi-Speaker & Bookmarks
   activeSpeakerFilter: string;   // 'all' or speaker name
-  // 5. Transparent Camera Overlay & Framing
+  // 5. Transparent Camera Overlay & Framing & Background Effects
   cameraOverlayMode: 'pip' | 'fullscreen-glass' | 'hidden';
   prompterBackgroundOpacity: number; // 0 (100% transparent glass) to 100 (solid OLED black)
   cameraFramingGuide: 'none' | '16:9' | '9:16' | 'grid';
   showAudioMeter: boolean;
+  cameraBackgroundEffect: 'none' | 'blur-light' | 'blur-medium' | 'blur-heavy' | 'studio-dark' | 'studio-bokeh' | 'vignette';
+  cameraBlurAmount: number; // 0 to 30px
 }
 
 export interface ScriptItem {
@@ -66,6 +68,9 @@ export interface RemoteCommandMessage {
     | 'align_camera'
     | 'toggle_flip'
     | 'toggle_voice'
+    | 'toggle_record'
+    | 'start_record'
+    | 'stop_record'
     | 'next_section'
     | 'prev_section'
     | 'sync_state_req'
@@ -76,6 +81,8 @@ export interface RemoteCommandMessage {
 
 export interface RemoteStatusState {
   isPlaying: boolean;
+  isRecording: boolean;
+  recordingDuration: number;
   speed: number;
   fontSize: number;
   title: string;
@@ -121,11 +128,13 @@ export const DEFAULT_CONFIG: PrompterConfig = {
   enableAutoPaceRamp: false,
   // 4. Multi-Speaker & Bookmarks
   activeSpeakerFilter: 'all',
-  // 5. Transparent Camera Overlay & Framing
+  // 5. Transparent Camera Overlay, Framing & Background Blur
   cameraOverlayMode: 'pip',
   prompterBackgroundOpacity: 100,
   cameraFramingGuide: 'none',
   showAudioMeter: true,
+  cameraBackgroundEffect: 'none',
+  cameraBlurAmount: 10,
 };
 
 export const COLOR_THEMES: Record<TextColorTheme, { label: string; textClass: string; hex: string; bgBadge: string }> = {

@@ -3,14 +3,17 @@ import {
   Camera,
   FlipHorizontal,
   Eye,
-  EyeOff,
   X,
   Radio,
   Maximize2,
   Grid,
   Volume2,
+  Sparkles,
+  Circle,
+  Square,
 } from 'lucide-react';
 import { useAudioLevel } from '../utils/useAudioLevel';
+import { getPresenterMaskStyle, getEffectiveBlurPx } from '../utils/backgroundSegmenter';
 
 interface CameraPreviewPIPProps {
   stream: MediaStream | null;
@@ -21,10 +24,15 @@ interface CameraPreviewPIPProps {
   framingGuide?: 'none' | '16:9' | '9:16' | 'grid';
   showAudioMeter?: boolean;
   isGlassFullscreen?: boolean;
+  backgroundEffect?: 'none' | 'blur-light' | 'blur-medium' | 'blur-heavy' | 'studio-dark' | 'studio-bokeh' | 'vignette';
+  blurAmount?: number;
+  cameraAlignment?: 'left' | 'center' | 'right';
+  onToggleRecord?: () => void;
   onToggleMirror: () => void;
   onChangePosition: (pos: 'top-center' | 'top-right' | 'top-left' | 'hidden') => void;
   onToggleGlassFullscreen?: () => void;
   onChangeFramingGuide?: (guide: 'none' | '16:9' | '9:16' | 'grid') => void;
+  onChangeBackgroundEffect?: (effect: any) => void;
   onClose: () => void;
 }
 
@@ -37,18 +45,27 @@ export const CameraPreviewPIP: React.FC<CameraPreviewPIPProps> = ({
   framingGuide = 'none',
   showAudioMeter = true,
   isGlassFullscreen = false,
+  backgroundEffect = 'none',
+  blurAmount = 10,
+  cameraAlignment = 'center',
+  onToggleRecord,
   onToggleMirror,
   onChangePosition,
   onToggleGlassFullscreen,
   onChangeFramingGuide,
+  onChangeBackgroundEffect,
   onClose,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const sharpVideoRef = useRef<HTMLVideoElement>(null);
   const audioLevel = useAudioLevel(stream, showAudioMeter);
 
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
+    }
+    if (sharpVideoRef.current && stream) {
+      sharpVideoRef.current.srcObject = stream;
     }
   }, [stream]);
 
@@ -61,17 +78,41 @@ export const CameraPreviewPIP: React.FC<CameraPreviewPIPProps> = ({
   const formattedDuration = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 
   // If in Glass Fullscreen mode, the camera feed is rendered full-screen in PrompterView behind the text.
-  // We only show a minimal controller pill here.
   if (isGlassFullscreen) {
     return (
-      <div className="fixed top-4 left-4 z-40 bg-zinc-950/80 backdrop-blur-md border border-zinc-700/60 rounded-xl px-3 py-1.5 flex items-center gap-3 text-xs text-white shadow-xl">
+      <div className="fixed top-4 left-4 z-40 bg-zinc-950/90 backdrop-blur-md border border-zinc-700/80 rounded-xl px-3 py-1.5 flex items-center gap-3 text-xs text-white shadow-2xl">
+        {onToggleRecord && (
+          <button
+            onClick={onToggleRecord}
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full font-bold transition-all ${
+              isRecording
+                ? 'bg-red-600 text-white animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.6)]'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-red-400'
+            }`}
+            title={isRecording ? 'Parar gravação' : 'Iniciar gravação'}
+          >
+            {isRecording ? (
+              <>
+                <Square className="w-3 h-3 fill-current" />
+                <span>REC {formattedDuration}</span>
+              </>
+            ) : (
+              <>
+                <Circle className="w-3 h-3 fill-current text-red-500" />
+                <span>Gravar</span>
+              </>
+            )}
+          </button>
+        )}
+
         <div className="flex items-center gap-1.5 font-bold text-cyan-400">
           <Eye className="w-3.5 h-3.5" />
-          <span>Fundo Vidro (Câmera Ativa)</span>
+          <span>Fundo Vidro</span>
         </div>
+
         {/* Audio VU meter */}
         {showAudioMeter && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" title="Nível de áudio">
             <Volume2 className="w-3 h-3 text-zinc-400" />
             <div className="w-12 h-1.5 bg-zinc-800 rounded-full overflow-hidden flex">
               <div
@@ -87,6 +128,7 @@ export const CameraPreviewPIP: React.FC<CameraPreviewPIPProps> = ({
             </div>
           </div>
         )}
+
         {onToggleGlassFullscreen && (
           <button
             onClick={onToggleGlassFullscreen}
@@ -107,6 +149,9 @@ export const CameraPreviewPIP: React.FC<CameraPreviewPIPProps> = ({
     posClasses = 'top-2 sm:top-4 left-3 sm:left-6';
   }
 
+  // Determine effective blur in px via Blur background utility
+  const effectiveBlur = getEffectiveBlurPx(backgroundEffect, blurAmount);
+
   return (
     <div
       className={`fixed ${posClasses} z-40 w-44 sm:w-60 md:w-68 bg-zinc-950/95 backdrop-blur-xl border border-zinc-800 rounded-xl sm:rounded-2xl shadow-2xl overflow-hidden transition-all duration-300`}
@@ -115,17 +160,28 @@ export const CameraPreviewPIP: React.FC<CameraPreviewPIPProps> = ({
       {/* Top micro-bar with REC status & controls */}
       <div className="flex items-center justify-between px-2 sm:px-3 py-1 bg-zinc-900/90 border-b border-zinc-800/80 text-[10px] sm:text-[11px]">
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {isRecording ? (
-            <div className="flex items-center gap-1 text-red-400 font-bold font-mono">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span>{formattedDuration}</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1 text-zinc-400 font-medium">
-              <Camera className="w-3 h-3 text-zinc-400" />
-              <span className="hidden sm:inline">Câmera</span>
-            </div>
-          )}
+          {/* Clickable REC button */}
+          <button
+            onClick={onToggleRecord}
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer transition-all ${
+              isRecording
+                ? 'bg-red-600/30 text-red-300 border border-red-500/60 animate-pulse'
+                : 'hover:bg-zinc-800 text-zinc-300'
+            }`}
+            title={isRecording ? 'Clique para Parar Gravação' : 'Clique para Iniciar Gravação'}
+          >
+            {isRecording ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                <span className="font-bold font-mono text-red-400">REC {formattedDuration}</span>
+              </>
+            ) : (
+              <>
+                <Camera className="w-3 h-3 text-red-400" />
+                <span className="font-medium text-zinc-300">Gravar</span>
+              </>
+            )}
+          </button>
 
           {/* Micro VU Meter */}
           {showAudioMeter && (
@@ -150,12 +206,36 @@ export const CameraPreviewPIP: React.FC<CameraPreviewPIPProps> = ({
         </div>
 
         <div className="flex items-center gap-0.5">
+          {/* Background Blur / Bokeh Cycle */}
+          {onChangeBackgroundEffect && (
+            <button
+              onClick={() => {
+                const nextEffects = {
+                  none: 'studio-bokeh',
+                  'studio-bokeh': 'blur-medium',
+                  'blur-medium': 'studio-dark',
+                  'studio-dark': 'none',
+                };
+                const next = (nextEffects as any)[backgroundEffect] || 'none';
+                onChangeBackgroundEffect(next);
+              }}
+              className={`p-1 rounded transition-colors ${
+                backgroundEffect !== 'none'
+                  ? 'text-cyan-400 bg-cyan-950/60 border border-cyan-500/40'
+                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+              }`}
+              title={`Blur background: ${backgroundEffect === 'none' ? 'Desativado' : `${effectiveBlur}px`} (Clique para alternar níveis de blur)`}
+            >
+              <Sparkles className="w-3 h-3" />
+            </button>
+          )}
+
           {/* Glass Fullscreen Toggle */}
           {onToggleGlassFullscreen && (
             <button
               onClick={onToggleGlassFullscreen}
               className="p-1 rounded text-zinc-400 hover:text-cyan-300 hover:bg-zinc-800 transition-colors"
-              title="Modo Vidro Transparente (Roteiro sobreposto ao seu rosto)"
+              title="Modo Vidro Transparente (Roteiro sobreposto à Câmera)"
             >
               <Maximize2 className="w-3 h-3" />
             </button>
@@ -222,15 +302,50 @@ export const CameraPreviewPIP: React.FC<CameraPreviewPIPProps> = ({
         </div>
       </div>
 
-      {/* Video Feed */}
+      {/* Video Feed with Background Blur & Bokeh Filter */}
       <div className="relative aspect-video bg-black overflow-hidden">
+        {/* Layer 1: Background Video (with Blur background if enabled) */}
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className={`w-full h-full object-cover ${mirrorCamera ? '-scale-x-100' : ''}`}
+          style={{
+            filter: effectiveBlur > 0 ? `blur(${effectiveBlur}px) brightness(0.9)` : 'none',
+            transform: mirrorCamera ? 'scaleX(-1)' : 'none',
+          }}
+          className="w-full h-full object-cover transition-all duration-200"
         />
+
+        {/* Layer 2: Focal Crisp Presenter Layer (keeps face, eyes, hair & body 100% sharp, ONLY background is blurred) */}
+        {effectiveBlur > 0 && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={getPresenterMaskStyle(cameraAlignment)}
+          >
+            <video
+              ref={sharpVideoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{
+                transform: mirrorCamera ? 'scaleX(-1)' : 'none',
+              }}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
+
+        {/* Studio Dark Vignette Overlay */}
+        {(backgroundEffect === 'studio-dark' || backgroundEffect === 'vignette') && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background:
+                'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.7) 100%)',
+            }}
+          />
+        )}
 
         {/* Framing Guides Overlay */}
         {framingGuide === '16:9' && (

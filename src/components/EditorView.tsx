@@ -21,14 +21,9 @@ import {
   FileText,
   RotateCcw,
 } from 'lucide-react';
-import {
-  PrompterConfig,
-  ScriptItem,
-  COLOR_THEMES,
-  TextColorTheme,
-  SAMPLE_SCRIPTS,
-} from '../types';
+import { PrompterConfig, ScriptItem, COLOR_THEMES, TextColorTheme, SAMPLE_SCRIPTS } from '../types';
 import { useVideoRecorder } from '../utils/useVideoRecorder';
+import { getPresenterMaskStyle } from '../utils/backgroundSegmenter';
 import {
   Camera,
   Video,
@@ -221,9 +216,14 @@ export const EditorView: React.FC<EditorViewProps> = ({
               }
               videoRecorder.setShowCameraPreview(true);
               onStartPrompter();
+              try {
+                await videoRecorder.startRecording();
+              } catch (err) {
+                console.error('Failed to auto-start recording:', err);
+              }
             }}
             className="hidden sm:flex px-4 py-2.5 text-xs font-bold text-white bg-red-600 hover:bg-red-500 border border-red-500/80 rounded-lg transition-all items-center gap-1.5 whitespace-nowrap shadow-[0_0_15px_rgba(239,68,68,0.35)] min-h-[38px]"
-            title="Abrir teleprompter com câmera e gravação ativadas"
+            title="Abrir teleprompter com câmera e iniciar gravação imediatamente"
           >
             <Circle className="w-3.5 h-3.5 fill-current text-white animate-pulse" />
             <span>Gravar Vídeo</span>
@@ -1134,6 +1134,74 @@ export const EditorView: React.FC<EditorViewProps> = ({
                   </button>
                 </div>
 
+                {/* Live Camera & Blur Preview Box */}
+                {videoRecorder.isCameraActive && videoRecorder.cameraStream && (
+                  <div className="relative aspect-video rounded-xl bg-black overflow-hidden border border-zinc-700 shadow-xl my-2">
+                    {/* Layer 1: Blurred Background Video */}
+                    <video
+                      ref={(el) => {
+                        if (el && videoRecorder.cameraStream) el.srcObject = videoRecorder.cameraStream;
+                      }}
+                      autoPlay
+                      playsInline
+                      muted
+                      style={{
+                        filter:
+                          config.cameraBackgroundEffect !== 'none'
+                            ? `blur(${config.cameraBlurAmount || 12}px) brightness(0.9)`
+                            : 'none',
+                        transform: `${videoRecorder.mirrorCamera ? 'scaleX(-1)' : ''} ${
+                          config.cameraBackgroundEffect !== 'none' ? 'scale(1.08)' : ''
+                        }`,
+                      }}
+                      className="w-full h-full object-cover transition-all"
+                    />
+
+                    {/* Layer 2: Sharp Presenter Video (Face, eyes & body remain 100% crisp!) */}
+                    {config.cameraBackgroundEffect !== 'none' && (
+                      <div
+                        className="absolute inset-0 pointer-events-none"
+                        style={getPresenterMaskStyle(config.cameraAlignment)}
+                      >
+                        <video
+                          ref={(el) => {
+                            if (el && videoRecorder.cameraStream) el.srcObject = videoRecorder.cameraStream;
+                          }}
+                          autoPlay
+                          playsInline
+                          muted
+                          style={{
+                            transform: videoRecorder.mirrorCamera ? 'scaleX(-1)' : 'none',
+                          }}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+
+                    {/* Vignette Overlay */}
+                    {(config.cameraBackgroundEffect === 'studio-dark' ||
+                      config.cameraBackgroundEffect === 'vignette') && (
+                      <div
+                        className="absolute inset-0 pointer-events-none"
+                        style={{
+                          background:
+                            'radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.8) 100%)',
+                        }}
+                      />
+                    )}
+
+                    <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-mono text-emerald-400 flex items-center gap-1.5 border border-emerald-500/40">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>
+                        Prévia ao Vivo{' '}
+                        {config.cameraBackgroundEffect !== 'none'
+                          ? '• Fundo Desfocado (Rosto Nítido)'
+                          : ''}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2 text-xs text-zinc-400">
                   {/* Mode selector: PIP vs Fullscreen Glass */}
                   <div>
@@ -1213,6 +1281,79 @@ export const EditorView: React.FC<EditorViewProps> = ({
                     </div>
                   </div>
 
+                  {/* Blur Background Feature */}
+                  <div className="pt-2 border-t border-zinc-800/80 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-200 font-semibold flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        Blur background
+                      </span>
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                        config.cameraBackgroundEffect !== 'none'
+                          ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                          : 'bg-zinc-800 text-zinc-400'
+                      }`}>
+                        {config.cameraBackgroundEffect === 'none'
+                          ? 'Desativado'
+                          : `${config.cameraBlurAmount}px Blur`}
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-zinc-400 leading-snug">
+                      Desfoque inteligente do fundo da câmera em tempo real para manter o apresentador 100% nítido com acabamento profissional.
+                    </p>
+
+                    <div className="grid grid-cols-3 gap-1 text-[11px]">
+                      {[
+                        { id: 'none', label: 'Desativado' },
+                        { id: 'blur-light', label: 'Blur Suave' },
+                        { id: 'blur-medium', label: 'Blur Padrão' },
+                        { id: 'blur-heavy', label: 'Blur Intenso' },
+                        { id: 'studio-bokeh', label: 'Bokeh Studio' },
+                        { id: 'studio-dark', label: 'Blur + Vinheta' },
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => onUpdateConfig({ cameraBackgroundEffect: item.id as any })}
+                          className={`py-1.5 px-1.5 rounded-lg border text-center transition-all truncate text-[10px] font-semibold ${
+                            config.cameraBackgroundEffect === item.id
+                              ? 'bg-amber-400/20 text-amber-300 border-amber-400/60 shadow-[0_0_8px_rgba(251,191,36,0.2)]'
+                              : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {config.cameraBackgroundEffect !== 'none' && (
+                      <div className="p-2.5 bg-zinc-900/60 rounded-lg border border-amber-400/30 space-y-1.5">
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-zinc-300">Intensidade do Blur background</span>
+                          <span className="text-amber-300 font-mono font-bold">
+                            {config.cameraBlurAmount}px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="2"
+                          max="28"
+                          value={config.cameraBlurAmount}
+                          onChange={(e) =>
+                            onUpdateConfig({ cameraBlurAmount: parseInt(e.target.value, 10) })
+                          }
+                          className="w-full accent-amber-400 cursor-pointer h-1.5"
+                        />
+                        <div className="flex justify-between text-[9px] text-zinc-500 font-mono">
+                          <span>2px (Sutil)</span>
+                          <span>12px (Padrão Estúdio)</span>
+                          <span>28px (Máximo)</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Audio VU meter & Mirror */}
                   <div className="pt-1 border-t border-zinc-800/60 space-y-1">
                     <label className="flex items-center justify-between cursor-pointer py-1 text-zinc-300 hover:text-white">
@@ -1288,6 +1429,11 @@ export const EditorView: React.FC<EditorViewProps> = ({
             }
             videoRecorder.setShowCameraPreview(true);
             onStartPrompter();
+            try {
+              await videoRecorder.startRecording();
+            } catch (err) {
+              console.error('Failed to auto-start recording on mobile:', err);
+            }
           }}
           className="flex-1 py-3 px-2 text-xs font-bold text-white bg-red-600 active:bg-red-700 rounded-xl transition-all flex items-center justify-center gap-1 shadow-[0_0_15px_rgba(239,68,68,0.35)] min-h-[44px]"
         >

@@ -27,6 +27,9 @@ import {
   Rewind,
   X,
   Grid,
+  Circle,
+  Square,
+  Sparkles,
 } from 'lucide-react';
 import { PrompterConfig, COLOR_THEMES, TextColorTheme } from '../types';
 import { SpeechScrollManager, findSpokenTextPosition, findKaraokeWordMatch } from '../utils/speechRecognition';
@@ -35,6 +38,7 @@ import { useVideoRecorder } from '../utils/useVideoRecorder';
 import { RemoteChannel } from '../utils/remoteChannel';
 import { parseScriptContent, ScriptSection } from '../utils/scriptParser';
 import { useAudioLevel } from '../utils/useAudioLevel';
+import { getPresenterMaskStyle, getEffectiveBlurPx } from '../utils/backgroundSegmenter';
 
 interface PrompterViewProps {
   scriptTitle: string;
@@ -78,6 +82,7 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
   const horizontalViewportRef = useRef<HTMLDivElement>(null);
   const textContainerRef = useRef<HTMLDivElement>(null);
   const backgroundVideoRef = useRef<HTMLVideoElement>(null);
+  const foregroundVideoRef = useRef<HTMLVideoElement>(null);
   const animationFrameIdRef = useRef<number | null>(null);
   const lastTimestampRef = useRef<number>(0);
   const scrollYRef = useRef<number>(0);
@@ -104,14 +109,23 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
     return Math.ceil((totalWords / config.wordsPerMinute) * 60);
   }, [totalWords, config.wordsPerMinute]);
 
-  // Keep background fullscreen video connected to camera stream
+  // Calculate effective blur for fullscreen glass mode via Blur background utility
+  const effectiveGlassBlur = useMemo(() => {
+    return getEffectiveBlurPx(config.cameraBackgroundEffect, config.cameraBlurAmount);
+  }, [config.cameraBackgroundEffect, config.cameraBlurAmount]);
+
+  // Keep background & sharp foreground fullscreen videos connected to camera stream
   useEffect(() => {
     if (
       config.cameraOverlayMode === 'fullscreen-glass' &&
-      backgroundVideoRef.current &&
       videoRecorder.cameraStream
     ) {
-      backgroundVideoRef.current.srcObject = videoRecorder.cameraStream;
+      if (backgroundVideoRef.current) {
+        backgroundVideoRef.current.srcObject = videoRecorder.cameraStream;
+      }
+      if (foregroundVideoRef.current) {
+        foregroundVideoRef.current.srcObject = videoRecorder.cameraStream;
+      }
     }
   }, [config.cameraOverlayMode, videoRecorder.cameraStream]);
 
@@ -125,6 +139,8 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
     if (!remoteChannelRef.current) return;
     remoteChannelRef.current.broadcastStatus({
       isPlaying,
+      isRecording: videoRecorder.isRecording,
+      recordingDuration: videoRecorder.recordingDuration,
       speed: config.speed,
       fontSize: config.fontSize,
       title: scriptTitle,
@@ -138,6 +154,8 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
     });
   }, [
     isPlaying,
+    videoRecorder.isRecording,
+    videoRecorder.recordingDuration,
     config.speed,
     config.fontSize,
     scriptTitle,
@@ -233,9 +251,45 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
     setActiveWordIndex(null);
   }, [pausePrompter]);
 
+  // Start Video Recording explicitly
+  const handleStartRecording = useCallback(async () => {
+    if (videoRecorder.isRecording) return;
+    try {
+      if (!videoRecorder.isCameraActive) {
+        await videoRecorder.startCamera();
+      }
+      videoRecorder.setShowCameraPreview(true);
+      await videoRecorder.startRecording();
+    } catch (err) {
+      console.error('Failed to start recording on host:', err);
+    }
+  }, [videoRecorder]);
+
+  // Stop Video Recording explicitly
+  const handleStopRecording = useCallback(async () => {
+    if (!videoRecorder.isRecording) return;
+    try {
+      const res = await videoRecorder.stopRecording();
+      if (res) {
+        onOpenRecordedVideoModal();
+      }
+    } catch (err) {
+      console.error('Failed to stop recording on host:', err);
+    }
+  }, [videoRecorder, onOpenRecordedVideoModal]);
+
+  // Toggle Video Recording
+  const handleToggleRecording = useCallback(async () => {
+    if (videoRecorder.isRecording) {
+      await handleStopRecording();
+    } else {
+      await handleStartRecording();
+    }
+  }, [videoRecorder.isRecording, handleStartRecording, handleStopRecording]);
+
   // Initialize Remote Channel Bus for Smartphone Remote Control
   useEffect(() => {
-    const remote = new RemoteChannel();
+    const remote = new RemoteChannel(true);
     remoteChannelRef.current = remote;
 
     remote.setOnCommand((cmd) => {
@@ -248,6 +302,15 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
           break;
         case 'toggle_play':
           togglePlayPause();
+          break;
+        case 'start_record':
+          handleStartRecording();
+          break;
+        case 'stop_record':
+          handleStopRecording();
+          break;
+        case 'toggle_record':
+          handleToggleRecording();
           break;
         case 'speed_up':
           onUpdateConfig({ speed: Math.min(20, config.speed + 1) });
@@ -313,6 +376,10 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
     pausePrompter,
     togglePlayPause,
     handleRestart,
+    handleStartRecording,
+    handleStopRecording,
+    handleToggleRecording,
+    videoRecorder.isRecording,
     config.speed,
     config.fontSize,
     config.flipHorizontal,
@@ -323,10 +390,10 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
     onUpdateConfig,
   ]);
 
-  // Sync status to remote every second
+  // Sync status to remote every second or on recording changes
   useEffect(() => {
     broadcastCurrentStatus();
-  }, [broadcastCurrentStatus, isPlaying, elapsedSeconds, progressRatio]);
+  }, [broadcastCurrentStatus, isPlaying, elapsedSeconds, progressRatio, videoRecorder.isRecording, videoRecorder.recordingDuration]);
 
   // Toggle voice recognition
   const handleToggleVoice = useCallback(() => {
@@ -661,10 +728,15 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
           textAlign: nextAlign,
         });
       } else if (e.key === 'r' || e.key === 'R') {
-        if (!e.shiftKey) {
-          e.preventDefault();
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleToggleRecording();
+        } else {
           handleRestart();
         }
+      } else if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        videoRecorder.setShowCameraPreview(!videoRecorder.showCameraPreview);
       } else if (e.key === 'h' || e.key === 'H') {
         e.preventDefault();
         onUpdateConfig({ flipHorizontal: !config.flipHorizontal });
@@ -705,6 +777,8 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
     onUpdateConfig,
     resetAutoHideTimer,
     handleRestart,
+    handleToggleRecording,
+    videoRecorder,
     handleToggleVoice,
     toggleFullscreen,
     pausePrompter,
@@ -759,15 +833,49 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
     >
       {/* 5. Fullscreen Glass Camera Video Stream (Under text) */}
       {config.cameraOverlayMode === 'fullscreen-glass' && videoRecorder.cameraStream && (
-        <video
-          ref={backgroundVideoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`fixed inset-0 w-full h-full object-cover -z-10 pointer-events-none transition-all duration-300 ${
-            videoRecorder.mirrorCamera ? '-scale-x-100' : ''
-          }`}
-        />
+        <div className="fixed inset-0 w-full h-full -z-10 pointer-events-none overflow-hidden">
+          {/* Layer 1: Blurred Background Room */}
+          <video
+            ref={backgroundVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-full object-cover transition-all duration-300"
+            style={{
+              filter: effectiveGlassBlur > 0 ? `blur(${effectiveGlassBlur}px) brightness(0.9)` : 'none',
+              transform: videoRecorder.mirrorCamera ? 'scaleX(-1)' : 'none',
+            }}
+          />
+
+          {/* Layer 2: Sharp Presenter Video (Face, eyes, hair & body remain 100% sharp, ONLY background is blurred) */}
+          {effectiveGlassBlur > 0 && (
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={getPresenterMaskStyle(config.cameraAlignment)}
+            >
+              <video
+                ref={foregroundVideoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  transform: videoRecorder.mirrorCamera ? 'scaleX(-1)' : 'none',
+                }}
+                className="w-full h-full object-cover"
+              />
+            </div>
+          )}
+
+          {/* Studio Dark / Vignette Overlay */}
+          {(config.cameraBackgroundEffect === 'studio-dark' || config.cameraBackgroundEffect === 'vignette') && (
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background: 'radial-gradient(circle at center, transparent 35%, rgba(0,0,0,0.85) 100%)',
+              }}
+            />
+          )}
+        </div>
       )}
 
       {/* Framing Guides Overlay */}
@@ -813,10 +921,15 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
             position={videoRecorder.cameraPosition}
             framingGuide={config.cameraFramingGuide}
             showAudioMeter={config.showAudioMeter}
+            backgroundEffect={config.cameraBackgroundEffect}
+            blurAmount={config.cameraBlurAmount}
+            cameraAlignment={config.cameraAlignment}
+            onToggleRecord={handleToggleRecording}
             onToggleMirror={() => videoRecorder.setMirrorCamera(!videoRecorder.mirrorCamera)}
             onChangePosition={(pos) => videoRecorder.setCameraPosition(pos)}
             onToggleGlassFullscreen={() => onUpdateConfig({ cameraOverlayMode: 'fullscreen-glass' })}
             onChangeFramingGuide={(g) => onUpdateConfig({ cameraFramingGuide: g })}
+            onChangeBackgroundEffect={(eff) => onUpdateConfig({ cameraBackgroundEffect: eff })}
             onClose={() => videoRecorder.setShowCameraPreview(false)}
           />
         )}
@@ -1316,6 +1429,33 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
               {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-0.5" />}
             </button>
 
+            {/* Video Recording REC Button */}
+            <button
+              onClick={handleToggleRecording}
+              className={`p-2 sm:px-3 sm:py-2 rounded-full font-bold transition-all shadow-lg min-w-[38px] min-h-[38px] flex items-center justify-center gap-1.5 shrink-0 ${
+                videoRecorder.isRecording
+                  ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]'
+                  : 'text-red-400 hover:text-red-300 hover:bg-red-950/60 border border-red-500/30'
+              }`}
+              title={
+                videoRecorder.isRecording
+                  ? 'Parar gravação e salvar vídeo (Shift+R)'
+                  : 'Iniciar gravação de vídeo (Shift+R)'
+              }
+            >
+              {videoRecorder.isRecording ? (
+                <>
+                  <Square className="w-3.5 h-3.5 fill-current text-white" />
+                  <span className="font-mono text-xs font-bold">REC {formatTime(videoRecorder.recordingDuration)}</span>
+                </>
+              ) : (
+                <>
+                  <Circle className="w-3.5 h-3.5 fill-current text-red-500 animate-pulse" />
+                  <span className="hidden sm:inline text-xs font-bold text-red-300">REC</span>
+                </>
+              )}
+            </button>
+
             {/* 1. Smartphone Remote Button */}
             <button
               onClick={onOpenRemoteModal}
@@ -1521,6 +1661,71 @@ export const PrompterView: React.FC<PrompterViewProps> = ({
             >
               ⇅ Flip Vertical
             </button>
+          </div>
+
+          {/* Background Blur / Effect Selector */}
+          <div className="pt-2 border-t border-zinc-800 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-zinc-300 font-semibold flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                Blur background
+              </span>
+              <span className="text-[10px] text-amber-300 font-mono capitalize">
+                {config.cameraBackgroundEffect === 'none'
+                  ? 'Nenhum'
+                  : config.cameraBackgroundEffect === 'blur-light'
+                  ? 'Suave'
+                  : config.cameraBackgroundEffect === 'blur-medium'
+                  ? 'Médio'
+                  : config.cameraBackgroundEffect === 'blur-heavy'
+                  ? 'Intenso'
+                  : config.cameraBackgroundEffect === 'studio-bokeh'
+                  ? 'Bokeh'
+                  : config.cameraBackgroundEffect === 'studio-dark'
+                  ? 'Dark'
+                  : 'Vinheta'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1 text-[10px]">
+              {[
+                { id: 'none', label: 'Desativado' },
+                { id: 'blur-light', label: 'Suave' },
+                { id: 'blur-medium', label: 'Padrão' },
+                { id: 'blur-heavy', label: 'Intenso' },
+                { id: 'studio-bokeh', label: 'Bokeh' },
+                { id: 'studio-dark', label: 'Vinheta' },
+              ].map((eff) => (
+                <button
+                  key={eff.id}
+                  onClick={() => onUpdateConfig({ cameraBackgroundEffect: eff.id as any })}
+                  className={`py-1 px-1.5 rounded border transition-all truncate ${
+                    config.cameraBackgroundEffect === eff.id
+                      ? 'bg-amber-400/20 text-amber-300 border-amber-400/60 font-bold'
+                      : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                  }`}
+                >
+                  {eff.label}
+                </button>
+              ))}
+            </div>
+
+            {config.cameraBackgroundEffect !== 'none' && (
+              <div>
+                <div className="flex justify-between text-[11px] mb-1">
+                  <span className="text-zinc-400">Intensidade do Blur background</span>
+                  <span className="text-amber-300 font-mono font-bold">{config.cameraBlurAmount}px</span>
+                </div>
+                <input
+                  type="range"
+                  min="2"
+                  max="25"
+                  value={config.cameraBlurAmount}
+                  onChange={(e) => onUpdateConfig({ cameraBlurAmount: parseInt(e.target.value, 10) })}
+                  className="w-full accent-amber-400 cursor-pointer h-1.5"
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
